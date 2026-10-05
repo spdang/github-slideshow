@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CordCare CRM</title>
+  <link rel="stylesheet" href="crm.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M12 2C8 7 6 10.5 6 14a6 6 0 0 0 12 0c0-3.5-2-7-6-12zm0 17a4 4 0 0 1-4-4h2a2 2 0 0 0 2 2v2z"/></svg>
+      <span>CordCare CRM</span>
+    </div>
+    <nav class="tabs" id="tabs">
+      <a href="#dashboard">Dashboard</a>
+      <a href="#pipeline">Pipeline</a>
+      <a href="#families">Families</a>
+      <a href="#samples">Samples</a>
+      <a href="#tasks">Tasks</a>
+      <a href="#orders">Prescriptions</a>
+      <a href="#visits">Visits</a>
+      <a href="#partners">Partners</a>
+    </nav>
+    <div class="menu">
+      <button class="btn ghost" id="menuBtn" aria-haspopup="true" aria-expanded="false">Data ▾</button>
+      <div class="menu-list" id="menuList" hidden>
+        <button data-action="export-json">Export backup (JSON)</button>
+        <button data-action="import-json">Import backup…</button>
+        <button data-action="export-csv">Export current list (CSV)</button>
+        <button data-action="seed">Load demo data</button>
+        <button data-action="reset" class="danger">Erase all data</button>
+      </div>
+      <input type="file" id="importFile" accept="application/json" hidden>
+    </div>
+  </header>
+
+  <main id="view" class="view"></main>
+
+  <dialog id="editor">
+    <form method="dialog" id="editorForm">
+      <h2 id="editorTitle"></h2>
+      <div class="form-grid" id="editorFields"></div>
+      <div class="dialog-actions">
+        <button type="button" class="btn danger ghost" id="deleteBtn">Delete</button>
+        <span class="spacer"></span>
+        <button type="button" class="btn ghost" id="cancelBtn">Cancel</button>
+        <button type="submit" class="btn primary">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script src="crm.js"></script>
+</body>
+</html>
