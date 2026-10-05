@@ -7,13 +7,14 @@ Open `crm/index.html` in a browser (or visit `/crm/` on the GitHub Pages site). 
 
 | Area | Purpose |
 | --- | --- |
-| **Dashboard** | Open leads, enrolled pre-birth families, units in storage, conversion rate, overdue billing, open prescriptions, late tasks; upcoming births with kit-shipped warnings; samples in the lab; storage renewals due. |
+| **Dashboard** | Open leads, enrolled pre-birth families, units in storage, conversion rate, overdue billing, open prescriptions, late tasks; doctor visits coming up; upcoming births with kit-shipped warnings; samples in the lab; storage renewals due. |
 | **Pipeline** | Kanban board of expectant families: Inquiry → Info Sent → Consultation → Enrolled → Kit Shipped → Collected → Stored (or Lost). Drag cards to change stage. |
-| **Families** | Parents, contact info, due date, service (cord blood / tissue), storage plan, hospital or provider, lead source, billing status, next renewal date. |
+| **Families** | Parents, contact info, due date, service (cord blood / tissue), storage plan, hospital / birth place, the doctor who recommended banking, lead source, billing status, next renewal date. |
 | **Samples** | Sample ID, linked family, type, collection date, lab status (In transit → Received → Processing → Cryopreserved / Failed QC / Released), courier tracking, volume, TNC count, viability, tank / rack / box location. |
 | **Tasks** | Calls, emails, consultations, kit shipments, follow-ups and billing chores, linked to a family and given a due date. |
 | **Prescriptions** | Doctors' orders: collection orders before a birth, and requests to release a stored unit for transplant or regenerative therapy. Records the prescribing doctor, family, unit to release, recipient, indication, issue and needed-by dates, status (Received → Verifying → Approved → Fulfilled / Rejected / Cancelled) and whether a signed copy is on file. Open orders also appear on the dashboard. |
-| **Partners** | Hospitals, OB/GYNs, pediatricians, hematologists / oncologists, transplant centers, midwives, doulas and birth centers, with license numbers and counts of the families they referred and the prescriptions they issued. |
+| **Visits** | Plan sales visits to doctors and clinics: date, time, purpose (introduction, brochure / kit drop-off, lunch & learn, follow-up, agreement), the rep, the outcome and the next step. Visits in the next 14 days, and planned visits nobody logged, appear on the dashboard. |
+| **Partners** | Hospitals, OB/GYNs, pediatricians, hematologists / oncologists, transplant centers, midwives, doulas and birth centers, with license numbers, how many families each doctor recommended, the prescriptions they issued, and their last and next visit dates. |
 
 Every list can be searched, filtered and sorted. Click any row or card to edit it.
 

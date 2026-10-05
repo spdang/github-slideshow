@@ -15,6 +15,7 @@
   const PARTNER_KINDS = ['Hospital', 'OB/GYN', 'Pediatrician', 'Hematologist / Oncologist', 'Transplant center', 'Midwife', 'Doula', 'Birth center'];
   const RX_STATUSES = ['Received', 'Verifying', 'Approved', 'Fulfilled', 'Rejected', 'Cancelled'];
   const RX_OPEN = ['Received', 'Verifying', 'Approved'];
+  const VISIT_STATUSES = ['Planned', 'Done', 'Cancelled'];
 
   // Schema-driven entities: forms, tables and CSV export are generated from these.
   const SCHEMAS = {
@@ -29,13 +30,14 @@
         { key: 'stage', label: 'Stage', type: 'select', options: STAGES, default: 'Inquiry' },
         { key: 'service', label: 'Service', type: 'select', options: ['Undecided', 'Cord blood', 'Cord blood + tissue', 'Cord tissue only'], default: 'Undecided' },
         { key: 'plan', label: 'Storage plan', type: 'select', options: ['Undecided', 'Annual', '18-year prepaid', 'Lifetime'], default: 'Undecided' },
-        { key: 'partnerId', label: 'Hospital / provider', type: 'ref', ref: 'partners' },
+        { key: 'partnerId', label: 'Hospital / birth place', type: 'ref', ref: 'partners' },
+        { key: 'referrerId', label: 'Recommended by (doctor)', type: 'ref', ref: 'partners' },
         { key: 'source', label: 'Lead source', type: 'select', options: ['Website', 'Provider referral', 'Baby expo', 'Friend / family', 'Social media', 'Other'], default: 'Website' },
         { key: 'billing', label: 'Billing', type: 'select', options: ['Not invoiced', 'Pending', 'Paid', 'Overdue'], default: 'Not invoiced' },
         { key: 'renewal', label: 'Next renewal', type: 'date' },
         { key: 'notes', label: 'Notes', type: 'textarea' },
       ],
-      columns: ['parent1', 'dueDate', 'stage', 'service', 'plan', 'partnerId', 'billing'],
+      columns: ['parent1', 'dueDate', 'stage', 'service', 'plan', 'partnerId', 'referrerId', 'billing'],
       filterKey: 'stage',
     },
     samples: {
@@ -82,7 +84,7 @@
         { key: 'city', label: 'City' },
         { key: 'notes', label: 'Notes', type: 'textarea' },
       ],
-      columns: ['name', 'kind', 'contact', 'phone', 'city', 'referrals', 'rxCount'],
+      columns: ['name', 'kind', 'contact', 'phone', 'city', 'referrals', 'rxCount', 'lastVisit', 'nextVisit'],
       filterKey: 'kind',
     },
     orders: {
@@ -105,6 +107,22 @@
       defaultSort: 'needBy',
       filterKey: 'rxStatus',
     },
+    visits: {
+      title: 'Doctor visits', singular: 'visit', nameKey: 'purpose',
+      fields: [
+        { key: 'doctorId', label: 'Doctor / clinic', type: 'ref', ref: 'partners', required: true },
+        { key: 'purpose', label: 'Purpose', type: 'select', options: ['Introduction', 'Brochure / kit drop-off', 'Lunch & learn', 'Follow-up', 'Agreement / contract', 'Other'], default: 'Introduction' },
+        { key: 'date', label: 'Date', type: 'date', required: true },
+        { key: 'time', label: 'Time', type: 'time' },
+        { key: 'visitStatus', label: 'Status', type: 'select', options: VISIT_STATUSES, default: 'Planned' },
+        { key: 'rep', label: 'Visited by (rep)' },
+        { key: 'outcome', label: 'Outcome / notes', type: 'textarea' },
+        { key: 'nextStep', label: 'Next step', wide: true },
+      ],
+      columns: ['date', 'time', 'doctorId', 'purpose', 'visitStatus', 'rep', 'nextStep'],
+      defaultSort: 'date',
+      filterKey: 'visitStatus',
+    },
   };
 
   // ---------- state & persistence ----------
@@ -112,7 +130,7 @@
   let db = load();
   const ui = { search: '', filter: '', sort: {} };
 
-  function emptyDb() { return { families: [], samples: [], tasks: [], partners: [], orders: [] }; }
+  function emptyDb() { return { families: [], samples: [], tasks: [], partners: [], orders: [], visits: [] }; }
 
   function load() {
     try {
@@ -177,18 +195,24 @@
     stage: { Inquiry: '', 'Info Sent': 'info', Consultation: 'info', Enrolled: 'accent', 'Kit Shipped': 'accent', Collected: 'warn', Stored: 'ok', Lost: 'bad' },
     billing: { 'Not invoiced': '', Pending: 'warn', Paid: 'ok', Overdue: 'bad' },
     status: { 'In transit': 'info', Received: 'info', Processing: 'warn', Cryopreserved: 'ok', 'Failed QC': 'bad', Released: '' },
+    visitStatus: { Planned: 'info', Done: 'ok', Cancelled: '' },
     rxStatus: { Received: 'info', Verifying: 'warn', Approved: 'accent', Fulfilled: 'ok', Rejected: 'bad', Cancelled: '' },
   };
 
   // Columns derived from other records rather than stored on the row.
   const COMPUTED = {
-    referrals: { label: 'Referrals', value: row => db.families.filter(f => f.partnerId === row.id).length },
+    referrals: { label: 'Families referred', value: row => db.families.filter(f => f.referrerId === row.id).length },
+    lastVisit: { label: 'Last visit', date: true, value: row => db.visits.filter(v => v.doctorId === row.id && v.visitStatus === 'Done').map(v => v.date).sort().pop() || '' },
+    nextVisit: { label: 'Next visit', date: true, value: row => db.visits.filter(v => v.doctorId === row.id && v.visitStatus === 'Planned' && daysUntil(v.date) >= 0).map(v => v.date).sort()[0] || '' },
     rxCount: { label: 'Prescriptions', value: row => db.orders.filter(o => o.doctorId === row.id).length },
   };
   const badge = (text, tone = '') => text ? `<span class="badge ${tone}">${esc(text)}</span>` : '';
 
   function cellHtml(type, key, row) {
-    if (COMPUTED[key]) return String(COMPUTED[key].value(row));
+    if (COMPUTED[key]) {
+      const c = COMPUTED[key], v = c.value(row);
+      return c.date ? (v ? `${esc(fmtDate(v))} <span class="badge">${esc(relDays(v))}</span>` : '') : String(v);
+    }
     const field = SCHEMAS[type].fields.find(f => f.key === key);
     const v = row[key];
     if (BADGE_TONES[key]) return badge(v, BADGE_TONES[key][v]);
@@ -198,7 +222,7 @@
       case 'date': {
         if (!v) return '';
         const n = daysUntil(v);
-        const overdue = n < 0 && ((type === 'tasks' && !row.done) || (key === 'needBy' && RX_OPEN.includes(row.rxStatus)));
+        const overdue = n < 0 && ((type === 'tasks' && !row.done) || (key === 'needBy' && RX_OPEN.includes(row.rxStatus)) || (type === 'visits' && row.visitStatus === 'Planned'));
         return `${esc(fmtDate(v))} <span class="badge ${overdue ? 'bad' : ''}">${esc(relDays(v))}</span>`;
       }
       case 'checkbox':
@@ -268,6 +292,9 @@
     const lab = db.samples.filter(s => ['In transit', 'Received', 'Processing'].includes(s.status));
     const openRx = db.orders.filter(o => RX_OPEN.includes(o.rxStatus))
       .sort((a, b) => (a.needBy || '9999').localeCompare(b.needBy || '9999'));
+    const visits = db.visits
+      .filter(v => v.visitStatus === 'Planned' && daysUntil(v.date) <= 14)
+      .sort((a, b) => (a.date + (a.time || '')).localeCompare(b.date + (b.time || '')));
     const urgentRx = openRx.filter(o => o.needBy && daysUntil(o.needBy) <= 7);
 
     const stat = (label, value, sub, alert) =>
@@ -275,6 +302,7 @@
 
     view.innerHTML = `
       <div class="toolbar"><h1>Dashboard</h1>
+        <button class="btn" data-new="visits">+ Visit</button>
         <button class="btn" data-new="tasks">+ Task</button>
         <button class="btn primary" data-new="families">+ Family</button>
       </div>
@@ -312,6 +340,15 @@
           ${listOrEmpty(lab, s => `<li><div class="grow"><div class="title" data-edit="samples:${esc(s.id)}">${esc(s.sampleId)}</div>
               <div class="meta">${esc(s.kind)} · ${esc(refLabel('families', s.familyId))} · collected ${esc(relDays(s.collectionDate))}</div></div>
               ${badge(s.status, BADGE_TONES.status[s.status])}</li>`, 'No samples in transit or processing.')}
+        </section>
+        <section class="card">
+          <h3>Doctor visits (14 days)</h3>
+          ${listOrEmpty(visits, v => {
+            const late = daysUntil(v.date) < 0;
+            return `<li><div class="grow"><div class="title" data-edit="visits:${esc(v.id)}">${esc(refLabel('partners', v.doctorId))}</div>
+              <div class="meta">${esc(v.purpose)} · ${esc(fmtDate(v.date))}${v.time ? ' ' + esc(v.time) : ''}${v.rep ? ' · ' + esc(v.rep) : ''}</div></div>
+              ${badge(late ? 'Not logged · ' + relDays(v.date) : relDays(v.date), late ? 'bad' : (daysUntil(v.date) === 0 ? 'warn' : 'info'))}</li>`;
+          }, 'No visits planned in the next 14 days.')}
         </section>
         <section class="card">
           <h3>Open prescriptions</h3>
@@ -637,19 +674,20 @@
     const lakeOb = add('partners', { name: 'Lakeside OB/GYN Group', kind: 'OB/GYN', contact: 'Dr. Priya Raman', phone: '555-0177', email: 'office@lakesideob.example', city: 'Springfield', notes: 'Hands out our brochure at 20-week visits.' });
     const drKim = add('partners', { name: 'Dr. Helen Kim', kind: 'Hematologist / Oncologist', contact: 'Springfield Children\'s Hospital', license: 'MD-448210', phone: '555-0191', email: 'hkim@schildrens.example', city: 'Springfield', notes: 'Pediatric transplant program lead.' });
     const drRaman = add('partners', { name: 'Dr. Priya Raman', kind: 'OB/GYN', contact: 'Lakeside OB/GYN Group', license: 'MD-301877', phone: '555-0177', email: 'praman@lakesideob.example', city: 'Springfield', notes: '' });
+    const drBell = add('partners', { name: 'Dr. Marcus Bell', kind: 'OB/GYN', contact: 'Riverton Women\'s Health', license: 'MD-512094', phone: '555-0163', email: 'mbell@rwh.example', city: 'Riverton', notes: 'Interested in a lunch & learn for his nurses.' });
     const bloom = add('partners', { name: 'Bloom Birth Center', kind: 'Birth center', contact: 'Ana Silva, CNM', phone: '555-0122', email: 'hello@bloom.example', city: 'Riverton', notes: '' });
 
     const fam = (o) => add('families', Object.assign({ parent2: '', service: 'Undecided', plan: 'Undecided', source: 'Website', billing: 'Not invoiced', renewal: '', notes: '' }, o));
-    const f1 = fam({ parent1: 'Emma Johnson', parent2: 'Liam Johnson', email: 'emma.j@example.com', phone: '555-0101', dueDate: isoToday(12), stage: 'Enrolled', service: 'Cord blood + tissue', plan: '18-year prepaid', partnerId: stMary, source: 'Provider referral', billing: 'Paid', notes: 'First baby. Prefers text messages.' });
-    const f2 = fam({ parent1: 'Sofia Martinez', email: 'sofia.m@example.com', phone: '555-0102', dueDate: isoToday(34), stage: 'Kit Shipped', service: 'Cord blood', plan: 'Annual', partnerId: lakeOb, source: 'Provider referral', billing: 'Pending' });
+    const f1 = fam({ referrerId: drRaman, parent1: 'Emma Johnson', parent2: 'Liam Johnson', email: 'emma.j@example.com', phone: '555-0101', dueDate: isoToday(12), stage: 'Enrolled', service: 'Cord blood + tissue', plan: '18-year prepaid', partnerId: stMary, source: 'Provider referral', billing: 'Paid', notes: 'First baby. Prefers text messages.' });
+    const f2 = fam({ referrerId: drRaman, parent1: 'Sofia Martinez', email: 'sofia.m@example.com', phone: '555-0102', dueDate: isoToday(34), stage: 'Kit Shipped', service: 'Cord blood', plan: 'Annual', partnerId: lakeOb, source: 'Provider referral', billing: 'Pending' });
     const f3 = fam({ parent1: 'Aisha Khan', parent2: 'Omar Khan', email: 'aisha.k@example.com', phone: '555-0103', dueDate: isoToday(70), stage: 'Consultation', service: 'Cord blood + tissue', partnerId: stMary, source: 'Baby expo', notes: 'Asked about sibling donor matching.' });
     const f4 = fam({ parent1: 'Chloe Nguyen', email: 'chloe.n@example.com', phone: '555-0104', dueDate: isoToday(110), stage: 'Inquiry', source: 'Social media' });
     const f5 = fam({ parent1: 'Grace Lee', parent2: 'Daniel Lee', email: 'grace.l@example.com', phone: '555-0105', dueDate: isoToday(88), stage: 'Info Sent', partnerId: bloom, source: 'Friend / family' });
     const f6 = fam({ parent1: 'Olivia Brown', email: 'olivia.b@example.com', phone: '555-0106', dueDate: isoToday(-3), stage: 'Collected', service: 'Cord blood', plan: 'Annual', partnerId: stMary, billing: 'Paid', renewal: isoToday(362) });
-    const f7 = fam({ parent1: 'Mia Patel', parent2: 'Arjun Patel', email: 'mia.p@example.com', phone: '555-0107', dueDate: isoToday(-340), stage: 'Stored', service: 'Cord blood + tissue', plan: 'Annual', partnerId: lakeOb, source: 'Provider referral', billing: 'Paid', renewal: isoToday(25) });
+    const f7 = fam({ referrerId: drRaman, parent1: 'Mia Patel', parent2: 'Arjun Patel', email: 'mia.p@example.com', phone: '555-0107', dueDate: isoToday(-340), stage: 'Stored', service: 'Cord blood + tissue', plan: 'Annual', partnerId: lakeOb, source: 'Provider referral', billing: 'Paid', renewal: isoToday(25) });
     const f8 = fam({ parent1: 'Hannah Wilson', email: 'hannah.w@example.com', phone: '555-0108', dueDate: isoToday(-500), stage: 'Stored', service: 'Cord blood', plan: 'Annual', partnerId: stMary, billing: 'Overdue', renewal: isoToday(-9), notes: 'Renewal invoice sent twice, no reply.' });
     fam({ parent1: 'Zoe Carter', email: 'zoe.c@example.com', phone: '555-0109', dueDate: isoToday(40), stage: 'Lost', source: 'Website', notes: 'Chose public donation instead.' });
-    const f10 = fam({ parent1: 'Isabella Rossi', email: 'isa.r@example.com', phone: '555-0110', dueDate: isoToday(19), stage: 'Enrolled', service: 'Cord blood', plan: 'Lifetime', partnerId: bloom, source: 'Provider referral', billing: 'Pending' });
+    const f10 = fam({ referrerId: drBell, parent1: 'Isabella Rossi', email: 'isa.r@example.com', phone: '555-0110', dueDate: isoToday(19), stage: 'Enrolled', service: 'Cord blood', plan: 'Lifetime', partnerId: bloom, source: 'Provider referral', billing: 'Pending' });
 
     add('samples', { sampleId: 'CB-24-0193', familyId: f6, kind: 'Cord blood', collectionDate: isoToday(-3), status: 'Processing', courier: '1Z999AA10123456784', volume: 92, tnc: '', viability: '', location: '', notes: '' });
     const cb0871 = add('samples', { sampleId: 'CB-23-0871', familyId: f7, kind: 'Cord blood', collectionDate: isoToday(-340), status: 'Cryopreserved', courier: '', volume: 105, tnc: 14.2, viability: 97, location: 'Tank 3 / Rack C / Box 12', notes: '' });
@@ -660,6 +698,12 @@
     rx({ orderNo: 'RX-2026-014', kind: 'Collection order', doctorId: drRaman, familyId: f1, issued: isoToday(-20), needBy: isoToday(12), rxStatus: 'Approved', signed: true, indication: 'Elective family banking' });
     rx({ orderNo: 'RX-2026-019', kind: 'Collection order', doctorId: drRaman, familyId: f10, issued: isoToday(-5), needBy: isoToday(19), rxStatus: 'Received', indication: 'Elective family banking', notes: 'Waiting for signed original.' });
     rx({ orderNo: 'RX-2026-021', kind: 'Release for transplant', doctorId: drKim, familyId: f7, unitId: cb0871, recipient: 'Sibling (age 4)', indication: 'Sibling transplant evaluation', issued: isoToday(-2), needBy: isoToday(5), rxStatus: 'Verifying', signed: true, notes: 'Confirm HLA match report before release.' });
+    const visit = (o) => add('visits', Object.assign({ time: '', rep: 'Sam (sales)', outcome: '', nextStep: '' }, o));
+    visit({ doctorId: drRaman, purpose: 'Brochure / kit drop-off', date: isoToday(-21), visitStatus: 'Done', outcome: 'Left 30 brochures and 5 demo kits with front desk.', nextStep: 'Restock brochures next month' });
+    visit({ doctorId: drBell, purpose: 'Introduction', date: isoToday(-2), time: '14:00', visitStatus: 'Planned', nextStep: 'Pitch lunch & learn' });
+    visit({ doctorId: drBell, purpose: 'Lunch & learn', date: isoToday(6), time: '12:00', visitStatus: 'Planned', nextStep: 'Bring catering + 20 info packs' });
+    visit({ doctorId: drRaman, purpose: 'Follow-up', date: isoToday(9), time: '10:30', visitStatus: 'Planned', nextStep: 'Review referral numbers' });
+    visit({ doctorId: drKim, purpose: 'Agreement / contract', date: isoToday(20), time: '15:00', visitStatus: 'Planned', nextStep: 'Sign transplant release protocol' });
     const task = (o) => add('tasks', Object.assign({ done: false, notes: '' }, o));
     task({ title: 'Ship collection kit', familyId: f1, kind: 'Ship kit', due: isoToday(0) });
     task({ title: 'Ship collection kit', familyId: f10, kind: 'Ship kit', due: isoToday(3) });
