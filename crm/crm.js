@@ -12,6 +12,9 @@
   const LEAD_STAGES = ['Inquiry', 'Info Sent', 'Consultation'];
   const PRE_BIRTH_STAGES = ['Enrolled', 'Kit Shipped'];
   const SAMPLE_STATUSES = ['In transit', 'Received', 'Processing', 'Cryopreserved', 'Failed QC', 'Released'];
+  const PARTNER_KINDS = ['Hospital', 'OB/GYN', 'Pediatrician', 'Hematologist / Oncologist', 'Transplant center', 'Midwife', 'Doula', 'Birth center'];
+  const RX_STATUSES = ['Received', 'Verifying', 'Approved', 'Fulfilled', 'Rejected', 'Cancelled'];
+  const RX_OPEN = ['Received', 'Verifying', 'Approved'];
 
   // Schema-driven entities: forms, tables and CSV export are generated from these.
   const SCHEMAS = {
@@ -64,21 +67,43 @@
         { key: 'notes', label: 'Notes', type: 'textarea' },
       ],
       columns: ['done', 'title', 'familyId', 'kind', 'due'],
+      defaultSort: 'due',
       filterKey: 'kind',
     },
     partners: {
       title: 'Partners', singular: 'partner', nameKey: 'name',
       fields: [
         { key: 'name', label: 'Name', required: true },
-        { key: 'kind', label: 'Type', type: 'select', options: ['Hospital', 'OB/GYN', 'Midwife', 'Doula', 'Birth center'], default: 'Hospital' },
+        { key: 'kind', label: 'Type', type: 'select', options: PARTNER_KINDS, default: 'Hospital' },
         { key: 'contact', label: 'Contact person' },
+        { key: 'license', label: 'Medical license #' },
         { key: 'phone', label: 'Phone', type: 'tel' },
         { key: 'email', label: 'Email', type: 'email' },
         { key: 'city', label: 'City' },
         { key: 'notes', label: 'Notes', type: 'textarea' },
       ],
-      columns: ['name', 'kind', 'contact', 'phone', 'city', 'referrals'],
+      columns: ['name', 'kind', 'contact', 'phone', 'city', 'referrals', 'rxCount'],
       filterKey: 'kind',
+    },
+    orders: {
+      title: 'Prescriptions', singular: 'prescription', nameKey: 'orderNo',
+      fields: [
+        { key: 'orderNo', label: 'Rx / order #', required: true },
+        { key: 'kind', label: 'Order type', type: 'select', options: ['Collection order', 'Release for transplant', 'Release for regenerative therapy', 'HLA typing / lab test', 'Other'], default: 'Collection order' },
+        { key: 'doctorId', label: 'Prescribing doctor', type: 'ref', ref: 'partners', required: true },
+        { key: 'familyId', label: 'Family', type: 'ref', ref: 'families', required: true },
+        { key: 'unitId', label: 'Sample to release', type: 'ref', ref: 'samples' },
+        { key: 'recipient', label: 'Recipient (patient)' },
+        { key: 'indication', label: 'Indication / diagnosis', wide: true },
+        { key: 'issued', label: 'Date issued', type: 'date' },
+        { key: 'needBy', label: 'Needed by', type: 'date' },
+        { key: 'rxStatus', label: 'Status', type: 'select', options: RX_STATUSES, default: 'Received' },
+        { key: 'signed', label: 'Signed copy on file', type: 'checkbox' },
+        { key: 'notes', label: 'Notes', type: 'textarea' },
+      ],
+      columns: ['orderNo', 'kind', 'familyId', 'doctorId', 'issued', 'needBy', 'rxStatus', 'signed'],
+      defaultSort: 'needBy',
+      filterKey: 'rxStatus',
     },
   };
 
@@ -87,7 +112,7 @@
   let db = load();
   const ui = { search: '', filter: '', sort: {} };
 
-  function emptyDb() { return { families: [], samples: [], tasks: [], partners: [] }; }
+  function emptyDb() { return { families: [], samples: [], tasks: [], partners: [], orders: [] }; }
 
   function load() {
     try {
@@ -152,11 +177,18 @@
     stage: { Inquiry: '', 'Info Sent': 'info', Consultation: 'info', Enrolled: 'accent', 'Kit Shipped': 'accent', Collected: 'warn', Stored: 'ok', Lost: 'bad' },
     billing: { 'Not invoiced': '', Pending: 'warn', Paid: 'ok', Overdue: 'bad' },
     status: { 'In transit': 'info', Received: 'info', Processing: 'warn', Cryopreserved: 'ok', 'Failed QC': 'bad', Released: '' },
+    rxStatus: { Received: 'info', Verifying: 'warn', Approved: 'accent', Fulfilled: 'ok', Rejected: 'bad', Cancelled: '' },
+  };
+
+  // Columns derived from other records rather than stored on the row.
+  const COMPUTED = {
+    referrals: { label: 'Referrals', value: row => db.families.filter(f => f.partnerId === row.id).length },
+    rxCount: { label: 'Prescriptions', value: row => db.orders.filter(o => o.doctorId === row.id).length },
   };
   const badge = (text, tone = '') => text ? `<span class="badge ${tone}">${esc(text)}</span>` : '';
 
   function cellHtml(type, key, row) {
-    if (key === 'referrals') return String(db.families.filter(f => f.partnerId === row.id).length);
+    if (COMPUTED[key]) return String(COMPUTED[key].value(row));
     const field = SCHEMAS[type].fields.find(f => f.key === key);
     const v = row[key];
     if (BADGE_TONES[key]) return badge(v, BADGE_TONES[key][v]);
@@ -166,17 +198,19 @@
       case 'date': {
         if (!v) return '';
         const n = daysUntil(v);
-        const overdue = type === 'tasks' && !row.done && n < 0;
+        const overdue = n < 0 && ((type === 'tasks' && !row.done) || (key === 'needBy' && RX_OPEN.includes(row.rxStatus)));
         return `${esc(fmtDate(v))} <span class="badge ${overdue ? 'bad' : ''}">${esc(relDays(v))}</span>`;
       }
-      case 'checkbox': return `<input type="checkbox" data-toggle="${esc(row.id)}" ${v ? 'checked' : ''} aria-label="Mark done">`;
+      case 'checkbox':
+        if (type !== 'tasks') return v ? badge('On file', 'ok') : badge('Missing', 'warn');
+        return `<input type="checkbox" data-toggle="${esc(row.id)}" ${v ? 'checked' : ''} aria-label="Mark done">`;
       default: return esc(v);
     }
   }
 
   // Plain-text value for sorting / searching / CSV.
   function cellText(type, key, row) {
-    if (key === 'referrals') return db.families.filter(f => f.partnerId === row.id).length;
+    if (COMPUTED[key]) return COMPUTED[key].value(row);
     const field = SCHEMAS[type].fields.find(f => f.key === key);
     if (field && field.type === 'ref') return refLabel(field.ref, row[key]);
     if (field && field.type === 'checkbox') return row[key] ? 'yes' : 'no';
@@ -184,7 +218,7 @@
   }
 
   function colLabel(type, key) {
-    if (key === 'referrals') return 'Referrals';
+    if (COMPUTED[key]) return COMPUTED[key].label;
     return SCHEMAS[type].fields.find(f => f.key === key).label;
   }
 
@@ -232,6 +266,9 @@
       .filter(f => f.renewal && daysUntil(f.renewal) <= 60)
       .sort((a, b) => a.renewal.localeCompare(b.renewal));
     const lab = db.samples.filter(s => ['In transit', 'Received', 'Processing'].includes(s.status));
+    const openRx = db.orders.filter(o => RX_OPEN.includes(o.rxStatus))
+      .sort((a, b) => (a.needBy || '9999').localeCompare(b.needBy || '9999'));
+    const urgentRx = openRx.filter(o => o.needBy && daysUntil(o.needBy) <= 7);
 
     const stat = (label, value, sub, alert) =>
       `<div class="card stat ${alert ? 'alert' : ''}"><div class="label">${label}</div><div class="value">${value}</div><div class="sub">${sub}</div></div>`;
@@ -247,6 +284,7 @@
         ${stat('Units in storage', stored.length, 'Cryopreserved samples')}
         ${stat('Conversion', conversion, 'Enrolled vs. lost')}
         ${stat('Overdue billing', overdueBilling.length, 'Families', overdueBilling.length > 0)}
+        ${stat('Open prescriptions', openRx.length, `${urgentRx.length} needed within 7 days`, urgentRx.length > 0)}
         ${stat('Late tasks', lateTasks.length, `${openTasks.length} open in total`, lateTasks.length > 0)}
       </div>
       <div class="grid-2">
@@ -274,6 +312,12 @@
           ${listOrEmpty(lab, s => `<li><div class="grow"><div class="title" data-edit="samples:${esc(s.id)}">${esc(s.sampleId)}</div>
               <div class="meta">${esc(s.kind)} · ${esc(refLabel('families', s.familyId))} · collected ${esc(relDays(s.collectionDate))}</div></div>
               ${badge(s.status, BADGE_TONES.status[s.status])}</li>`, 'No samples in transit or processing.')}
+        </section>
+        <section class="card">
+          <h3>Open prescriptions</h3>
+          ${listOrEmpty(openRx, o => `<li><div class="grow"><div class="title" data-edit="orders:${esc(o.id)}">${esc(o.kind)} · ${esc(o.orderNo)}</div>
+              <div class="meta">${esc(refLabel('families', o.familyId))} · by ${esc(refLabel('partners', o.doctorId))}${o.needBy ? ' · needed ' + esc(relDays(o.needBy)) : ''}</div></div>
+              ${o.signed ? '' : badge('Unsigned', 'warn')} ${badge(o.rxStatus, BADGE_TONES.rxStatus[o.rxStatus])}</li>`, 'No open prescriptions.')}
         </section>
         <section class="card">
           <h3>Storage renewals (60 days)</h3>
@@ -317,7 +361,7 @@
   function renderList(type) {
     const s = SCHEMAS[type];
     const filterField = s.fields.find(f => f.key === s.filterKey);
-    const sort = ui.sort[type] || { key: s.columns[type === 'tasks' ? 4 : 0], dir: 1 };
+    const sort = ui.sort[type] || { key: s.defaultSort || s.columns[0], dir: 1 };
     const q = ui.search.toLowerCase();
 
     let rows = db[type].filter(r => !ui.filter || r[s.filterKey] === ui.filter);
@@ -552,7 +596,8 @@
     if (!file) return;
     try {
       const data = JSON.parse(await file.text());
-      if (!Object.keys(SCHEMAS).every(k => Array.isArray(data[k]))) throw new Error('bad shape');
+      // Older backups may predate some lists; those start empty.
+      if (!data || !Array.isArray(data.families) || !Object.keys(SCHEMAS).every(k => data[k] === undefined || Array.isArray(data[k]))) throw new Error('bad shape');
       if (!confirm('Replace current data with this backup?')) return;
       db = Object.assign(emptyDb(), data);
       save();
@@ -590,6 +635,8 @@
 
     const stMary = add('partners', { name: "St. Mary's Women's Hospital", kind: 'Hospital', contact: 'Dana Ortiz (L&D manager)', phone: '555-0140', email: 'ld@stmarys.example', city: 'Springfield', notes: 'Collection kits accepted at L&D desk 24/7.' });
     const lakeOb = add('partners', { name: 'Lakeside OB/GYN Group', kind: 'OB/GYN', contact: 'Dr. Priya Raman', phone: '555-0177', email: 'office@lakesideob.example', city: 'Springfield', notes: 'Hands out our brochure at 20-week visits.' });
+    const drKim = add('partners', { name: 'Dr. Helen Kim', kind: 'Hematologist / Oncologist', contact: 'Springfield Children\'s Hospital', license: 'MD-448210', phone: '555-0191', email: 'hkim@schildrens.example', city: 'Springfield', notes: 'Pediatric transplant program lead.' });
+    const drRaman = add('partners', { name: 'Dr. Priya Raman', kind: 'OB/GYN', contact: 'Lakeside OB/GYN Group', license: 'MD-301877', phone: '555-0177', email: 'praman@lakesideob.example', city: 'Springfield', notes: '' });
     const bloom = add('partners', { name: 'Bloom Birth Center', kind: 'Birth center', contact: 'Ana Silva, CNM', phone: '555-0122', email: 'hello@bloom.example', city: 'Riverton', notes: '' });
 
     const fam = (o) => add('families', Object.assign({ parent2: '', service: 'Undecided', plan: 'Undecided', source: 'Website', billing: 'Not invoiced', renewal: '', notes: '' }, o));
@@ -605,10 +652,14 @@
     const f10 = fam({ parent1: 'Isabella Rossi', email: 'isa.r@example.com', phone: '555-0110', dueDate: isoToday(19), stage: 'Enrolled', service: 'Cord blood', plan: 'Lifetime', partnerId: bloom, source: 'Provider referral', billing: 'Pending' });
 
     add('samples', { sampleId: 'CB-24-0193', familyId: f6, kind: 'Cord blood', collectionDate: isoToday(-3), status: 'Processing', courier: '1Z999AA10123456784', volume: 92, tnc: '', viability: '', location: '', notes: '' });
-    add('samples', { sampleId: 'CB-23-0871', familyId: f7, kind: 'Cord blood', collectionDate: isoToday(-340), status: 'Cryopreserved', courier: '', volume: 105, tnc: 14.2, viability: 97, location: 'Tank 3 / Rack C / Box 12', notes: '' });
+    const cb0871 = add('samples', { sampleId: 'CB-23-0871', familyId: f7, kind: 'Cord blood', collectionDate: isoToday(-340), status: 'Cryopreserved', courier: '', volume: 105, tnc: 14.2, viability: 97, location: 'Tank 3 / Rack C / Box 12', notes: '' });
     add('samples', { sampleId: 'CT-23-0871', familyId: f7, kind: 'Cord tissue', collectionDate: isoToday(-340), status: 'Cryopreserved', courier: '', volume: '', tnc: '', viability: '', location: 'Tank 3 / Rack C / Box 13', notes: '' });
     add('samples', { sampleId: 'CB-23-0544', familyId: f8, kind: 'Cord blood', collectionDate: isoToday(-500), status: 'Cryopreserved', courier: '', volume: 78, tnc: 9.6, viability: 95, location: 'Tank 1 / Rack A / Box 4', notes: '' });
 
+    const rx = (o) => add('orders', Object.assign({ unitId: '', recipient: '', indication: '', needBy: '', signed: false, notes: '' }, o));
+    rx({ orderNo: 'RX-2026-014', kind: 'Collection order', doctorId: drRaman, familyId: f1, issued: isoToday(-20), needBy: isoToday(12), rxStatus: 'Approved', signed: true, indication: 'Elective family banking' });
+    rx({ orderNo: 'RX-2026-019', kind: 'Collection order', doctorId: drRaman, familyId: f10, issued: isoToday(-5), needBy: isoToday(19), rxStatus: 'Received', indication: 'Elective family banking', notes: 'Waiting for signed original.' });
+    rx({ orderNo: 'RX-2026-021', kind: 'Release for transplant', doctorId: drKim, familyId: f7, unitId: cb0871, recipient: 'Sibling (age 4)', indication: 'Sibling transplant evaluation', issued: isoToday(-2), needBy: isoToday(5), rxStatus: 'Verifying', signed: true, notes: 'Confirm HLA match report before release.' });
     const task = (o) => add('tasks', Object.assign({ done: false, notes: '' }, o));
     task({ title: 'Ship collection kit', familyId: f1, kind: 'Ship kit', due: isoToday(0) });
     task({ title: 'Ship collection kit', familyId: f10, kind: 'Ship kit', due: isoToday(3) });
